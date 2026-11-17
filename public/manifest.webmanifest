@@ -1,0 +1,10 @@
+{
+  "name": "Ocarina Tabs",
+  "short_name": "Ocarina Tabs",
+  "description": "Translate sheet music into ocarina fingering tabs.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f9",
+  "theme_color": "#2f5d8a",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

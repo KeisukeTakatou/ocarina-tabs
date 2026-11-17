@@ -1,0 +1,112 @@
+{
+  "id": "4-custom",
+  "name": "4-hole pendant (custom example)",
+  "description": "Example custom chart: the built-in 4-hole plus an extra alternate fingering. Copy and edit to match your maker.",
+  "holes": [
+    {
+      "id": "L1",
+      "label": "Left upper",
+      "x": 34,
+      "y": 36,
+      "r": 9
+    },
+    {
+      "id": "L2",
+      "label": "Left lower",
+      "x": 34,
+      "y": 62,
+      "r": 10
+    },
+    {
+      "id": "R1",
+      "label": "Right upper (small)",
+      "x": 66,
+      "y": 36,
+      "r": 6.2
+    },
+    {
+      "id": "R2",
+      "label": "Right lower",
+      "x": 66,
+      "y": 62,
+      "r": 7.6
+    }
+  ],
+  "groups": [
+    [
+      0,
+      1
+    ],
+    [
+      2,
+      3
+    ]
+  ],
+  "drawing": {
+    "viewBox": [
+      100,
+      100
+    ],
+    "body": "M50,8 C78,8 94,28 94,50 C94,68 82,80 66,86 L60,96 L40,96 L34,86 C18,80 6,68 6,50 C6,28 22,8 50,8 Z"
+  },
+  "fingerings": [
+    {
+      "offset": 0,
+      "holes": "XX XX"
+    },
+    {
+      "offset": 1,
+      "holes": "XX HX"
+    },
+    {
+      "offset": 2,
+      "holes": "XX OX"
+    },
+    {
+      "offset": 3,
+      "holes": "XX XH"
+    },
+    {
+      "offset": 4,
+      "holes": "XX XO"
+    },
+    {
+      "offset": 5,
+      "holes": "XX OO"
+    },
+    {
+      "offset": 6,
+      "holes": "OX XX"
+    },
+    {
+      "offset": 7,
+      "holes": "OX OX"
+    },
+    {
+      "offset": 8,
+      "holes": "OX XO"
+    },
+    {
+      "offset": 9,
+      "holes": "OX OO"
+    },
+    {
+      "offset": 10,
+      "holes": "OO OX"
+    },
+    {
+      "offset": 11,
+      "holes": "OO XO"
+    },
+    {
+      "offset": 12,
+      "holes": "OO OO"
+    },
+    {
+      "offset": 1,
+      "holes": "XX XH",
+      "alt": true,
+      "comment": "example alternate"
+    }
+  ]
+}
