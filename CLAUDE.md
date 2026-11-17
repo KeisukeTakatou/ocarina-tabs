@@ -16,7 +16,8 @@ When a user wants a melody *in the app* (as note text), follow the `ocarina-impo
 3. **Convert.**
    - `npm run ocarina -- convert <file> -i 12 -k C` gives readable text tabs (● covered, ○ open, ◐ half).
    - Add `--json` for structured data (`arrangement.events[].holes`, `status`, `concertName`, `fingeringName`).
-   - Use `-f svg -o out.svg` or `-f html -o out.html` for a printable sheet. Add `--size 150` for bigger diagrams.
+   - Use `-f svg -o out.svg` or `-f html -o out.html` for a printable sheet. Add `--size 150` for bigger diagrams,
+     and `--notation staff` (sheet music) or `--notation both` (sheet music above tabs).
 4. **Report problems.** Check `stats.folded` and `stats.outOfRange` and the `warnings`. Mention notes moved by an octave and any transposition, and suggest a better ocarina or key when many notes don't fit.
 
 ## Conventions

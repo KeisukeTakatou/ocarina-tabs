@@ -20,7 +20,8 @@ import {
   renderChartSvg,
   renderChartText,
   renderHtml,
-  renderTabSheet,
+  Notation,
+  renderNotation,
   renderText,
   resolveTonic,
   scoreToSimple,
@@ -62,6 +63,7 @@ OUTPUT
   --names <mode>           concert (default) | fingering | both | none
   --width <px>             SVG/HTML sheet width (default 860)
   --size <percent>         SVG/HTML diagram size, e.g. 150 or 150% (default 100, range 40–400)
+  --notation <view>        SVG/HTML: tabs (default) | staff (sheet music) | both (staff above tabs)
   -o, --out <file>         Write to file (format inferred from extension if --format omitted)
   --json                   Shortcut for --format json
 
@@ -106,6 +108,13 @@ function parseArgs(argv: string[]): { cmd: string; positional: string[]; opts: O
 function fail(msg: string): never {
   process.stderr.write(`error: ${msg}\n`);
   process.exit(1);
+}
+
+function notationOpt(opts: Opts): Notation {
+  const v = str(opts, 'notation') ?? 'tabs';
+  if (v === 'sheet') return 'staff';
+  if (v !== 'tabs' && v !== 'staff' && v !== 'both') fail('--notation must be tabs, staff or both');
+  return v;
 }
 
 /** --size → sheet options. */
@@ -322,10 +331,10 @@ async function main() {
           emit(opts, JSON.stringify({ ocarina: describeOcarina({ instrument: inst, tonic }), input: { format: input.format, midiTracks: input.midiTracks, selectedTrack: input.selectedTrack, musicXmlParts: input.musicXmlParts }, holeOrder: inst.holes.map((h) => h.id), arrangement: arr }, null, 2) + '\n');
           break;
         case 'svg':
-          emit(opts, renderTabSheet(arr, inst, { width: Number(str(opts, 'width') ?? 860), names, ...diagramOpts(opts) }).svg);
+          emit(opts, renderNotation(arr, inst, notationOpt(opts), { width: Number(str(opts, 'width') ?? 860), names, ...diagramOpts(opts) }).svg);
           break;
         case 'html':
-          emit(opts, renderHtml(arr, inst, { names, ...diagramOpts(opts) }));
+          emit(opts, renderHtml(arr, inst, { names, notation: notationOpt(opts), ...diagramOpts(opts) }));
           break;
         case 'midi':
           if (!str(opts, 'out')) fail('MIDI output is binary; use --out file.mid');

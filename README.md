@@ -6,7 +6,12 @@ Translate existing music — **MIDI, MusicXML (.musicxml/.xml/.mxl), ABC notatio
 It is built for two kinds of users:
 
 - **People** use the web app: open a file or type notes, choose the ocarina, and get a printable tab sheet with playback.
-  The sheet follows the playing note (⇣ Auto-scroll), and the −/+ slider above it resizes the diagrams (also Ctrl + mouse wheel).
+  The **Music** tab shows **Tabs**, **Sheet music** (standard staff notation), or both **Side by side**. In
+  side-by-side view each pane scrolls on its own. During playback, the current note is highlighted in both and
+  each pane follows it (⇣ Auto-scroll). The −/+ slider resizes the diagrams and the staff (also Ctrl + mouse wheel).
+  The **Library** tab keeps songs for later. Imported files are saved automatically (each melody once), typed songs
+  with **Save to library**, and every song remembers its ocarina settings. It's stored in the browser, so use
+  **Back up** / **Restore** (one JSON file) to keep a copy or move it to another device.
 - **Claude and scripts** use the CLI, which reads files or inline text and writes text, JSON, SVG, HTML or MIDI.
 
 Both run on the same platform-independent core (`src/core`, TypeScript, no dependencies), which a future Android app can reuse.
@@ -54,6 +59,10 @@ Fingering strings use one character per hole, in that order: `X` covered, `O` op
 The 12-hole diagram is a vector drawing traced from the common `12c_note` picture charts (a slanted body, with the thumb
 holes drawn below it). Those charts finger C#6 and D#6 as L4 + R3, so the app uses those fingerings as primary;
 the L1 + L4 fingerings are listed as alternates.
+
+SVG output (Export → SVG, `-f svg`, the HTML page) has a transparent background and follows the viewer's light or dark
+mode. In dark mode, covered holes are light and open holes are dark. Printing always uses the light colours. PNG
+exports get a white background, since an image can't switch themes. Tools without CSS support show the light colours.
 
 ### Custom fingering charts
 
@@ -126,7 +135,8 @@ ocarina-tabs instruments --export <id>      Print a full chart definition (templ
 ```
 
 Common options: `-i 4|6|12`, `-k C`, `--voice alto`, `-t auto|octave|none|N`, `--out-of-range fold|mark`,
-`-f text|ascii|json|svg|html|midi|notes`, `--names concert|fingering|both|none`, `--size 150` (diagram size in %), `-o file`,
+`-f text|ascii|json|svg|html|midi|notes`, `--names concert|fingering|both|none`, `--size 150` (diagram size in %),
+`--notation tabs|staff|both` (SVG/HTML: tabs, sheet music, or sheet music above tabs), `-o file`,
 `--text "<notes>"`, `--track N`, `--part N`, `--staff N`, `--tune N`.
 Run `npm run ocarina -- help` for the full list.
 
@@ -163,6 +173,8 @@ src/core/            platform-independent library (no DOM / Node APIs)
   score.ts           Score model, melody extraction
   instruments.ts     4/6/12-hole layouts + fingering charts, keys & voices
   arrange.ts         transposition search, fingering lookup, suggestions
+  render/staff.ts    staff notation (clef, key, beams, ties, rests …) drawn without a music font
+  library.ts         saved-song library: entries, search, backup format, merge
   parsers/           midi, musicxml (+ .mxl zip), abc, note text, format detection
   render/            SVG diagrams, tab sheet, text tabs, HTML page
 src/cli/main.ts      command line interface

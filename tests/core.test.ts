@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest';
 import {
   arrange,
   cleanHoles,
+  findDuplicate,
+  inferKeyFifths,
+  renderNotation,
+  renderStaffSvg,
+  spellPitch,
+  splitDuration,
+  makeEntry,
+  mergeLibraries,
+  parseLibrary,
+  removeEntry,
+  searchLibrary,
+  serializeLibrary,
+  upsertEntry,
   convert,
   getInstrument,
   importMusic,
@@ -334,5 +347,121 @@ describe('diagrams', () => {
     const inst = getInstrument('12');
     const arr = arrange(parseSimple('C5 D5 E5 F5'), { instrument: inst, tonic: 72 }, { transpose: 'none' });
     expect(renderTabSheet(arr, inst, { scale: 2 }).height).toBeGreaterThan(renderTabSheet(arr, inst).height + 40);
+  });
+});
+
+describe('transparent, theme-aware SVG', () => {
+  const inst = getInstrument('12');
+  const arr = arrange(parseSimple('C5 D5 r E5:9'), { instrument: inst, tonic: 72 }, { transpose: 'none' });
+
+  it('has no background and switches to dark colours for dark-mode viewers (screen only)', () => {
+    const { svg } = renderTabSheet(arr, inst);
+    expect(svg).not.toContain('<rect width="100%"');
+    expect(svg).toContain('@media screen and (prefers-color-scheme: dark)');
+    // Every fill/stroke colour comes with a role class the dark style can override.
+    for (const m of svg.matchAll(/<(?:path|circle|text|line|rect)\b[^>]*>/g)) {
+      const tag = m[0];
+      if (/ fill="#|stroke="#/.test(tag)) expect(tag, tag).toMatch(/class="[^"]*oc-[fs]-/);
+    }
+  });
+
+  it('keeps a solid background without the dark style when one is asked for', () => {
+    const { svg } = renderTabSheet(arr, inst, { background: '#ffffff' });
+    expect(svg).toContain('<rect width="100%" height="100%" fill="#ffffff"/>');
+    expect(svg).not.toContain('prefers-color-scheme');
+    expect(renderTabSheet(arr, inst, { adaptive: false }).svg).not.toContain('<style>');
+  });
+});
+
+describe('library', () => {
+  const ode = 'title: Ode to Joy\ncomposer: Beethoven\nE4 E4 F4 G4 | G4 F4 E4 D4 |';
+
+  it('makes entries with a summary, title from the melody or the file name', () => {
+    const e = makeEntry({ text: ode, mode: 'text', settings: { instrument: '12', key: 'G' } }, 1000);
+    expect(e).toMatchObject({ title: 'Ode to Joy', composer: 'Beethoven', notes: 8, range: 'D4–G4', created: 1000, updated: 1000 });
+    expect(makeEntry({ text: 'C D E', mode: 'text', source: 'my_song-v2.mid' }).title).toBe('my song v2');
+    expect(makeEntry({ text: 'X:1\nT:Abc Tune\nK:C\nCDE|', mode: 'abc' }).title).toBe('Abc Tune');
+  });
+
+  it('upserts by id keeping the creation time, finds duplicates and searches', () => {
+    const a = makeEntry({ text: ode, mode: 'text', id: 'a' }, 1);
+    const b = makeEntry({ text: 'title: Grace\nG4 C5', mode: 'text', id: 'b', source: 'grace.abc' }, 2);
+    let list = upsertEntry(upsertEntry([], a), b);
+    expect(list.map((e) => e.id)).toEqual(['b', 'a']);
+    list = upsertEntry(list, { ...makeEntry({ text: ode + ' A4', mode: 'text', id: 'a' }, 5) });
+    expect(list[0]).toMatchObject({ id: 'a', created: 1, updated: 5, notes: 9 });
+    expect(findDuplicate(list, 'title: Grace\n  G4   C5 ', 'text')?.id).toBe('b');
+    expect(findDuplicate(list, 'title: Grace\nG4 C5', 'abc')).toBeUndefined();
+    expect(searchLibrary(list, 'beet joy').map((e) => e.id)).toEqual(['a']);
+    expect(searchLibrary(list, 'grace.abc').map((e) => e.id)).toEqual(['b']);
+    expect(removeEntry(list, 'a').map((e) => e.id)).toEqual(['b']);
+  });
+
+  it('round-trips a backup and merges it without duplicates', () => {
+    const a = makeEntry({ text: ode, mode: 'text', id: 'a', settings: { instrument: '6' } }, 1);
+    const json = serializeLibrary([a]);
+    expect(JSON.parse(json)).toMatchObject({ app: 'ocarina-tabs', kind: 'library', version: 1 });
+    const back = parseLibrary(json);
+    expect(back).toEqual([a]);
+    expect(() => parseLibrary('{"hello":1}')).toThrow(/not an Ocarina Tabs library/);
+    expect(parseLibrary('[{"text":""},{"text":"C4 D4","title":"Two"}]').map((e) => e.title)).toEqual(['Two']);
+
+    const newer = { ...a, text: ode + ' C4', updated: 9 };
+    const copyOfA = { ...a, id: 'other' };
+    const fresh = makeEntry({ text: 'G4 G4', mode: 'text', id: 'c' }, 3);
+    const r = mergeLibraries([a], [copyOfA, newer, fresh]);
+    expect(r).toMatchObject({ added: 1, updated: 1 });
+    expect(r.list.map((e) => e.id)).toEqual(['a', 'c']);
+    expect(r.list[0].updated).toBe(9);
+  });
+});
+
+describe('staff notation', () => {
+  const inst = getInstrument('12');
+  const arrOf = (text: string) => arrange(parseSimple(text), { instrument: inst, tonic: 72 }, { transpose: 'none' });
+
+  it('spells notes in the key and infers the key from the melody', () => {
+    expect(spellPitch(78, 1)).toMatchObject({ letter: 3, acc: 1, octave: 5 }); // F#5 in G
+    expect(spellPitch(70, -1)).toMatchObject({ letter: 6, acc: -1, octave: 4 }); // Bb4 in F
+    expect(spellPitch(70, 0)).toMatchObject({ letter: 6, acc: -1 }); // Bb, not A#, in C
+    expect(spellPitch(73, 0)).toMatchObject({ letter: 0, acc: 1 }); // C#
+    expect(spellPitch(64, 0).step).toBe(30); // E4 = bottom line
+    const g = parseSimple('G4 A4 B4 C5 D5 E5 F#5 G5').notes.map((n) => ({ pitch: n.pitch, duration: n.duration }));
+    expect(inferKeyFifths(g)).toBe(1);
+  });
+
+  it('splits durations into notatable values, including dotted notes and triplets', () => {
+    const v = (d: number) => splitDuration(d).map((p) => `${p.base}${'.'.repeat(p.dots)}${p.triplet ? '3' : ''}`);
+    expect(v(1)).toEqual(['q']);
+    expect(v(1.5)).toEqual(['q.']);
+    expect(v(3)).toEqual(['h.']);
+    expect(v(5)).toEqual(['w', 'q']);
+    expect(v(1 / 3)).toEqual(['83']);
+    expect(v(4 / 3)).toEqual(['q', '83']);
+  });
+
+  it('draws one cell per note piece, ties notes across bar lines and uses the source key', () => {
+    // No "|" in the text, so bars fall every 4 beats and D5 (beats 3–5) crosses one.
+    const arr = arrOf('time: 4/4\nC5:3 D5:2 E5:3 F#5:4');
+    const { svg } = renderStaffSvg(arr);
+    // D5 crosses the first bar line: two cells with the same index, joined by a tie.
+    expect(svg.match(/data-index="1"/g)).toHaveLength(2);
+    expect(svg.match(/<g class="cell /g)).toHaveLength(5);
+    expect(svg).toContain('prefers-color-scheme: dark');
+
+    const grace = arrange(parseAbc('X:1\nT:G tune\nM:3/4\nL:1/4\nK:G\nG A B|c2 d|'), { instrument: inst, tonic: 72 }, { transpose: 'none' });
+    expect(grace.keyFifths).toBe(1);
+  });
+
+  it('stacks staff above tabs for the "both" notation', () => {
+    const arr = arrOf('C5 D5 E5 F5');
+    const both = renderNotation(arr, inst, 'both');
+    const staff = renderNotation(arr, inst, 'staff');
+    const tabs = renderNotation(arr, inst, 'tabs');
+    expect(both.height).toBeGreaterThan(staff.height);
+    expect(both.svg.match(/<svg /g)).toHaveLength(3);
+    expect(both.svg.match(/Untitled/g)).toHaveLength(1); // one title for the whole page
+    expect(tabs.svg).not.toContain('<ellipse');
+    expect(staff.svg).toContain('<ellipse');
   });
 });

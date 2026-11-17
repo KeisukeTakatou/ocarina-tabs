@@ -16,7 +16,6 @@
   --oc-body-stroke: #5b6b80;
   --oc-closed: #1f2a37;
   --oc-open: #ffffff;
-  --oc-paper: #ffffff;
   color-scheme: light;
 }
 
@@ -34,12 +33,11 @@
     --warn: #f0a24a;
     --err: #f27272;
     --highlight: rgba(111, 163, 214, 0.22);
-    /* Diagrams stay paper-coloured so "covered = dark" reads the same in both themes. */
-    --oc-body: #c9d5e3;
+    /* Diagrams use light "ink" for covered holes on dark (same as DARK_THEME in src/core/render/diagram.ts). */
+    --oc-body: #2b3644;
     --oc-body-stroke: #9fb0c4;
-    --oc-closed: #141a22;
-    --oc-open: #ffffff;
-    --oc-paper: #f4f6f9;
+    --oc-closed: #e8eef5;
+    --oc-open: #10151c;
     color-scheme: dark;
   }
 }
@@ -239,7 +237,7 @@ code { font-family: ui-monospace, Consolas, monospace; background: var(--surface
 .tabs .zoom button:hover { border-color: var(--accent); }
 .zoom input { width: 110px; accent-color: var(--accent); }
 .zoom output { font-size: 12px; color: var(--muted); min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
-@media (max-width: 520px) { .zoom input { width: 70px; } .zoom output { display: none; } }
+@media (max-width: 520px) { .zoom input, .zoom output { display: none; } .tabs button { padding-left: 10px; padding-right: 10px; } }
 
 .status { font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
 .status:empty { display: none; }
@@ -264,6 +262,18 @@ code { font-family: ui-monospace, Consolas, monospace; background: var(--surface
 .sheet .cell:hover .cell-bg { fill: var(--highlight); fill-opacity: 1; }
 .sheet .cell.playing .cell-bg { fill: var(--highlight); fill-opacity: 1; stroke: var(--accent); stroke-width: 1.5; }
 
+/* Notation: tabs, staff, or both side by side (each pane scrolls on its own and follows playback). */
+.viewbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.viewbar .seg { flex: 0 1 auto; }
+.viewbar .seg button { min-height: 32px; padding: 0 14px; font-size: 14px; white-space: nowrap; }
+.music { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.music.both { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+.music.both .pane { max-height: calc(100vh - 170px); min-height: 260px; overflow: auto; overscroll-behavior: contain; }
+@media (max-width: 860px) {
+  .music.both { grid-template-columns: minmax(0, 1fr); }
+  .music.both .pane { max-height: 46vh; }
+}
+
 .legend { font-size: 13px; color: var(--muted); margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1.3px solid var(--oc-closed); vertical-align: -1px; box-shadow: 0 0 0 2.5px var(--oc-body); margin: 0 3px; }
 .legend .dot.closed { background: var(--oc-closed); }
@@ -287,6 +297,37 @@ code { font-family: ui-monospace, Consolas, monospace; background: var(--surface
   max-width: calc(100vw - 32px);
 }
 
+/* Library */
+.save-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 10px; }
+.save-row .hint { margin: 0; }
+.tabs .count { font-size: 12px; font-weight: 600; color: var(--muted); }
+.tabs .count:empty { display: none; }
+.library { display: flex; flex-direction: column; gap: 10px; }
+.library-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+.library-bar input[type='search'] {
+  flex: 1 1 120px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--surface); color: var(--text);
+}
+.library .hint { margin: 0; }
+.library-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); }
+.song {
+  display: flex; align-items: stretch; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); overflow: hidden;
+}
+.song.current { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.song-open {
+  flex: 1; min-width: 0; text-align: left; border: 0; background: none; padding: 10px 12px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.song-open:hover { background: var(--surface-2); }
+.song-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.song-meta { font-size: 12px; color: var(--muted); }
+.song-del {
+  border: 0; border-left: 1px solid var(--border); background: none; color: var(--muted);
+  width: 40px; cursor: pointer; font-size: 15px;
+}
+.song-del:hover { color: var(--err); background: var(--surface-2); }
+
 @media (max-width: 860px) {
   .layout { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; }
   .content { order: -1; }
@@ -300,9 +341,11 @@ code { font-family: ui-monospace, Consolas, monospace; background: var(--surface
 }
 
 @media print {
-  :root { --oc-body: #dfe7f1; --oc-body-stroke: #5b6b80; --oc-closed: #1f2a37; --oc-open: #fff; --oc-paper: #fff; --text: #1f2a37; --muted: #5b6b80; }
+  :root { --oc-body: #dfe7f1; --oc-body-stroke: #5b6b80; --oc-closed: #1f2a37; --oc-open: #fff; --text: #1f2a37; --muted: #5b6b80; }
   body { background: #fff; }
-  .topbar, .panel, .tabs, .status, .legend, #chart { display: none !important; }
+  .topbar, .panel, .tabs, .viewbar, .status, .legend, #chart, #library { display: none !important; }
+  .music.both { display: block; }
+  .music .pane { max-height: none !important; overflow: visible !important; margin-bottom: 12px; }
   .layout { display: block; padding: 0; }
   .sheet { border: 0; padding: 0; }
   .sheet .cell.playing .cell-bg { fill: transparent; stroke: none; }

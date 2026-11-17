@@ -68,6 +68,11 @@
             <p><code>C4 D#4 Bb4</code> notes with octave (C4 = middle C) · <code>:2</code> 2 beats · <code>/2</code> half beat · <code>.</code> dotted · <code>r</code> rest · <code>|</code> bar line · <code>_</code> hold one more beat · <code>"la"</code> lyric · <code>title:</code>, <code>tempo:</code>, <code>time: 3/4</code> headers.</p>
             <p>Letter tabs without octaves (<code>C D E F G</code>) also work. Switch to ABC to paste ABC tunes.</p>
           </details>
+          <div class="save-row">
+            <button id="save-song" class="btn" type="button">☆ Save to library</button>
+            <button id="save-new" class="btn" type="button" hidden>Save as new</button>
+            <span id="save-status" class="hint" aria-live="polite"></span>
+          </div>
         </div>
       </section>
 
@@ -143,8 +148,9 @@
 
     <main class="content">
       <div class="tabs" role="tablist">
-        <button type="button" role="tab" data-tab="sheet" aria-selected="true">Tabs</button>
+        <button type="button" role="tab" data-tab="sheet" aria-selected="true">Music</button>
         <button type="button" role="tab" data-tab="chart" aria-selected="false">Fingering chart</button>
+        <button type="button" role="tab" data-tab="library" aria-selected="false">Library <span id="library-count" class="count"></span></button>
         <div class="zoom" role="group" aria-label="Diagram size">
           <button type="button" id="zoom-out" aria-label="Smaller diagrams">−</button>
           <input id="zoom" type="range" min="50" max="300" step="10" value="100" aria-label="Diagram size" />
@@ -152,9 +158,31 @@
           <output id="zoom-value" for="zoom">100%</output>
         </div>
       </div>
+      <div class="viewbar" id="viewbar">
+        <div class="seg" id="notation" role="radiogroup" aria-label="Notation">
+          <button type="button" role="radio" data-value="tabs">Tabs</button>
+          <button type="button" role="radio" data-value="staff">Sheet music</button>
+          <button type="button" role="radio" data-value="both">Side by side</button>
+        </div>
+      </div>
       <div id="status" class="status" aria-live="polite"></div>
-      <div id="sheet" class="sheet" role="tabpanel"></div>
+      <div id="music" class="music" role="tabpanel">
+        <div id="staff" class="sheet pane" aria-label="Sheet music"></div>
+        <div id="sheet" class="sheet pane" aria-label="Fingering tabs"></div>
+      </div>
       <div id="chart" class="sheet" role="tabpanel" hidden></div>
+      <div id="library" class="library" role="tabpanel" hidden>
+        <div class="library-bar">
+          <input id="library-search" type="search" placeholder="Search saved songs" aria-label="Search saved songs" />
+          <button id="library-backup" class="btn" type="button" title="Download every saved song as one JSON file">Back up</button>
+          <label class="btn" title="Add songs from a library backup (JSON)">
+            Restore
+            <input id="library-restore" type="file" accept=".json,application/json" hidden />
+          </label>
+        </div>
+        <p id="library-info" class="hint"></p>
+        <ul id="library-list" class="library-list"></ul>
+      </div>
       <p class="legend">
         <span class="dot closed"></span> covered <span class="dot half"></span> half <span class="dot open"></span> open
         <span class="dot back"></span> thumb hole (back) · bar under each note = its length · <span class="warn">↑↓</span> moved by an octave · <span class="err">?</span> not playable

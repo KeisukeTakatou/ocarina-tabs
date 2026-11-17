@@ -3,7 +3,7 @@
 import { Arrangement, TabEvent } from '../arrange.ts';
 import { InstrumentDef } from '../instruments.ts';
 import { keyPrefersFlats, midiToName, toFraction } from '../pitch.ts';
-import { diagramMarkup, DiagramTheme, escapeXml, LIGHT_THEME } from './diagram.ts';
+import { adaptiveStyle, diagramMarkup, DiagramTheme, escapeXml, LIGHT_TEXT, LIGHT_THEME } from './diagram.ts';
 
 export type NameMode = 'concert' | 'fingering' | 'both' | 'none';
 
@@ -17,13 +17,19 @@ export interface SheetOptions {
   showDurations?: boolean;
   showLyrics?: boolean;
   showHeader?: boolean;
-  /** Use CSS variables for colors (inline in the app) instead of fixed colors (exports). */
+  /** Diagram colours (default LIGHT_THEME). The app passes CSS_THEME to use its own CSS variables. */
   theme?: DiagramTheme;
   textColor?: string;
   mutedColor?: string;
   warnColor?: string;
   errorColor?: string;
+  /** Background colour. Default: none (transparent). */
   background?: string | null;
+  /**
+   * Embed a <style> that switches to dark colours when the viewer prefers dark mode.
+   * Default: true when there is no background colour.
+   */
+  adaptive?: boolean;
   fontFamily?: string;
 }
 
@@ -48,6 +54,13 @@ export interface SheetResult {
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
+/** Optional background rect and dark-mode style shared by the sheet and the chart. */
+export function sheetChrome(opts: { background?: string | null; adaptive?: boolean }): string {
+  const bg = opts.background ? `<rect width="100%" height="100%" fill="${opts.background}"/>` : '';
+  const adaptive = opts.adaptive ?? !opts.background;
+  return (adaptive ? adaptiveStyle() : '') + bg;
+}
+
 export function voiceLabel(tonic: number): string {
   // Alto window F4..E5 (65..76)
   if (tonic >= 77) return 'Soprano';
@@ -68,13 +81,41 @@ export function durationLabel(d: number): string {
   return den === 1 ? `${n}` : `${n}/${den}`;
 }
 
+/** Title, composer and arrangement line, centred; wraps on narrow sheets. Returns the y below it. */
+export function sheetHeader(arr: Arrangement, W: number, top: number, colors: { text: string; muted: string }, pad = 20): { markup: string; y: number } {
+  const { text, muted } = colors;
+  const parts: string[] = [];
+  let y = top;
+  const title = arr.title || 'Untitled';
+  parts.push(`<text x="${W / 2}" y="${y + 18}" text-anchor="middle" font-size="20" font-weight="600" class="oc-f-text" fill="${text}">${escapeXml(title)}</text>`);
+  y += 26;
+  if (arr.composer) {
+    parts.push(`<text x="${W / 2}" y="${y + 12}" text-anchor="middle" font-size="12" class="oc-f-muted" fill="${muted}">${escapeXml(arr.composer)}</text>`);
+    y += 16;
+  }
+  // Wrap the description onto several lines on narrow sheets (≈6.3px per char at 12px).
+  const bits = describeArrangement(arr).split(' · ');
+  const maxChars = Math.floor((W - 2 * pad) / 6.3);
+  const lines: string[] = [];
+  for (const b of bits) {
+    const last = lines[lines.length - 1];
+    if (last !== undefined && (last + ' · ' + b).length <= maxChars) lines[lines.length - 1] = last + ' · ' + b;
+    else lines.push(b);
+  }
+  for (const line of lines) {
+    parts.push(`<text x="${W / 2}" y="${y + 12}" text-anchor="middle" font-size="12" class="oc-f-muted" fill="${muted}">${escapeXml(line)}</text>`);
+    y += 16;
+  }
+  return { markup: parts.join(''), y: y + 10 };
+}
+
 export function renderTabSheet(arr: Arrangement, inst: InstrumentDef, opts: SheetOptions = {}): SheetResult {
   let W = Math.max(240, opts.width ?? 860);
   const pad = 20;
-  const text = opts.textColor ?? '#1f2a37';
-  const muted = opts.mutedColor ?? '#5b6b80';
-  const warn = opts.warnColor ?? '#b45309';
-  const err = opts.errorColor ?? '#b91c1c';
+  const text = opts.textColor ?? LIGHT_TEXT.text;
+  const muted = opts.mutedColor ?? LIGHT_TEXT.muted;
+  const warn = opts.warnColor ?? LIGHT_TEXT.warn;
+  const err = opts.errorColor ?? LIGHT_TEXT.err;
   const font = opts.fontFamily ?? 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
   const names = opts.names ?? 'concert';
   const showDur = opts.showDurations ?? true;
@@ -92,27 +133,9 @@ export function renderTabSheet(arr: Arrangement, inst: InstrumentDef, opts: Shee
   const parts: string[] = [];
   let y = pad;
   if (opts.showHeader ?? true) {
-    const title = arr.title || 'Untitled';
-    parts.push(`<text x="${W / 2}" y="${y + 18}" text-anchor="middle" font-size="20" font-weight="600" fill="${text}">${escapeXml(title)}</text>`);
-    y += 26;
-    if (arr.composer) {
-      parts.push(`<text x="${W / 2}" y="${y + 12}" text-anchor="middle" font-size="12" fill="${muted}">${escapeXml(arr.composer)}</text>`);
-      y += 16;
-    }
-    // Wrap the description onto several lines on narrow sheets (≈6.3px per char at 12px).
-    const bits = describeArrangement(arr).split(' · ');
-    const maxChars = Math.floor((W - 2 * pad) / 6.3);
-    const lines: string[] = [];
-    for (const b of bits) {
-      const last = lines[lines.length - 1];
-      if (last !== undefined && (last + ' · ' + b).length <= maxChars) lines[lines.length - 1] = last + ' · ' + b;
-      else lines.push(b);
-    }
-    for (const line of lines) {
-      parts.push(`<text x="${W / 2}" y="${y + 12}" text-anchor="middle" font-size="12" fill="${muted}">${escapeXml(line)}</text>`);
-      y += 16;
-    }
-    y += 10;
+    const h = sheetHeader(arr, W, y, { text, muted });
+    parts.push(h.markup);
+    y = h.y;
   }
 
   // Group events by measure.
@@ -134,7 +157,7 @@ export function renderTabSheet(arr: Arrangement, inst: InstrumentDef, opts: Shee
     rowHasContent = false;
   };
   const drawBar = (bx: number) => {
-    parts.push(`<line x1="${r1(bx)}" y1="${r1(rowTop + 4)}" x2="${r1(bx)}" y2="${r1(rowTop + cellH - 6)}" stroke="${muted}" stroke-width="1" opacity="0.6"/>`);
+    parts.push(`<line x1="${r1(bx)}" y1="${r1(rowTop + 4)}" x2="${r1(bx)}" y2="${r1(rowTop + cellH - 6)}" class="oc-s-muted" stroke="${muted}" stroke-width="1" opacity="0.6"/>`);
   };
 
   for (const m of measures) {
@@ -145,7 +168,7 @@ export function renderTabSheet(arr: Arrangement, inst: InstrumentDef, opts: Shee
       x += barGap;
     }
     // Measure number above first cell of the measure.
-    parts.push(`<text x="${r1(x + 2)}" y="${r1(rowTop + 6)}" font-size="8" fill="${muted}" opacity="0.8">${m[0].measure + 1}</text>`);
+    parts.push(`<text x="${r1(x + 2)}" y="${r1(rowTop + 6)}" font-size="8" class="oc-f-muted" fill="${muted}" opacity="0.8">${m[0].measure + 1}</text>`);
     for (const e of m) {
       if (x + cellW > right + 0.5) newRow();
       parts.push(renderCell(e, x, rowTop));
@@ -159,26 +182,27 @@ export function renderTabSheet(arr: Arrangement, inst: InstrumentDef, opts: Shee
     const cls = `cell cell-${e.status}`;
     const tip = e.status === 'rest' ? `Rest, ${durationLabel(e.duration)} beat(s)` : `${e.concertName ?? midiToName(e.sourcePitch ?? 0)} — ${durationLabel(e.duration)} beat(s)${e.status === 'folded' ? ' (moved by an octave)' : ''}${e.status === 'out-of-range' ? ' (out of range)' : ''}`;
     g.push(`<g class="${cls}" data-index="${e.index}" data-start="${e.start}"><title>${escapeXml(tip)}</title>`);
-    g.push(`<rect class="cell-bg" x="${r1(cx + 1)}" y="${r1(top)}" width="${r1(cellW - 2)}" height="${r1(cellH)}" rx="5" fill="${e.status === 'out-of-range' ? err : 'transparent'}" fill-opacity="${e.status === 'out-of-range' ? 0.08 : 0}"/>`);
+    g.push(`<rect class="cell-bg${e.status === 'out-of-range' ? ' oc-f-err' : ''}" x="${r1(cx + 1)}" y="${r1(top)}" width="${r1(cellW - 2)}" height="${r1(cellH)}" rx="5" fill="${e.status === 'out-of-range' ? err : 'transparent'}" fill-opacity="${e.status === 'out-of-range' ? 0.08 : 0}"/>`);
     const dx = cx + (cellW - dw) / 2;
     const dy = top + 8;
     if (e.status === 'rest') {
-      g.push(`<rect x="${r1(cx + cellW / 2 - 8)}" y="${r1(dy + dh / 2 - 2.5)}" width="16" height="5" rx="2.5" fill="${muted}" opacity="0.45"/>`);
+      g.push(`<rect x="${r1(cx + cellW / 2 - 8)}" y="${r1(dy + dh / 2 - 2.5)}" width="16" height="5" rx="2.5" class="oc-f-muted" fill="${muted}" opacity="0.45"/>`);
     } else if (e.holes) {
       g.push(draw(e.holes, dx, dy));
     } else {
-      g.push(`<text x="${r1(cx + cellW / 2)}" y="${r1(dy + dh / 2 + 6)}" text-anchor="middle" font-size="18" font-weight="700" fill="${err}">?</text>`);
+      g.push(`<text x="${r1(cx + cellW / 2)}" y="${r1(dy + dh / 2 + 6)}" text-anchor="middle" font-size="18" font-weight="700" class="oc-f-err" fill="${err}">?</text>`);
     }
     let ty = dy + dh + 4;
     if (names !== 'none') {
       const color = e.status === 'out-of-range' ? err : e.status === 'folded' ? warn : text;
+      const role = e.status === 'rest' ? 'muted' : e.status === 'out-of-range' ? 'err' : e.status === 'folded' ? 'warn' : 'text';
       const label = e.status === 'rest' ? 'rest' : names === 'fingering' ? e.fingeringName : e.concertName ?? (e.sourcePitch !== null ? midiToName(e.sourcePitch) : '');
       ty += 11;
       const arrow = e.status === 'folded' && e.pitch !== null && e.sourcePitch !== null ? (e.pitch - arr.transpose > e.sourcePitch ? '↑' : '↓') : '';
-      g.push(`<text x="${r1(cx + cellW / 2)}" y="${r1(ty)}" text-anchor="middle" font-size="11" font-weight="${e.status === 'rest' ? 400 : 600}" fill="${e.status === 'rest' ? muted : color}">${escapeXml((label ?? '') + arrow)}</text>`);
+      g.push(`<text x="${r1(cx + cellW / 2)}" y="${r1(ty)}" text-anchor="middle" font-size="11" font-weight="${e.status === 'rest' ? 400 : 600}" class="oc-f-${role}" fill="${e.status === 'rest' ? muted : color}">${escapeXml((label ?? '') + arrow)}</text>`);
       if (names === 'both' && e.status !== 'rest' && e.fingeringName) {
         ty += 11;
-        g.push(`<text x="${r1(cx + cellW / 2)}" y="${r1(ty)}" text-anchor="middle" font-size="9" fill="${muted}">(${escapeXml(e.fingeringName)})</text>`);
+        g.push(`<text x="${r1(cx + cellW / 2)}" y="${r1(ty)}" text-anchor="middle" font-size="9" class="oc-f-muted" fill="${muted}">(${escapeXml(e.fingeringName)})</text>`);
       }
     }
     if (showDur) {
@@ -187,21 +211,20 @@ export function renderTabSheet(arr: Arrangement, inst: InstrumentDef, opts: Shee
       const len = Math.min(e.duration, 4) * beatPx;
       const bx = cx + (cellW - Math.max(len, 2)) / 2;
       const col = e.status === 'rest' ? muted : text;
-      g.push(`<rect x="${r1(bx)}" y="${r1(ty - 2)}" width="${r1(Math.max(len, 2))}" height="3" rx="1.5" fill="${col}" opacity="${e.status === 'rest' ? 0.35 : 0.55}"/>`);
-      if (e.duration > 4) g.push(`<text x="${r1(bx + len + 2)}" y="${r1(ty + 1)}" font-size="7" fill="${muted}">+</text>`);
+      g.push(`<rect x="${r1(bx)}" y="${r1(ty - 2)}" width="${r1(Math.max(len, 2))}" height="3" rx="1.5" class="oc-f-${e.status === 'rest' ? 'muted' : 'text'}" fill="${col}" opacity="${e.status === 'rest' ? 0.35 : 0.55}"/>`);
+      if (e.duration > 4) g.push(`<text x="${r1(bx + len + 2)}" y="${r1(ty + 1)}" font-size="7" class="oc-f-muted" fill="${muted}">+</text>`);
       ty += 3;
     }
     if (showLyrics && e.lyric) {
       ty += 12;
-      g.push(`<text x="${r1(cx + cellW / 2)}" y="${r1(ty)}" text-anchor="middle" font-size="10" font-style="italic" fill="${muted}">${escapeXml(e.lyric)}</text>`);
+      g.push(`<text x="${r1(cx + cellW / 2)}" y="${r1(ty)}" text-anchor="middle" font-size="10" font-style="italic" class="oc-f-muted" fill="${muted}">${escapeXml(e.lyric)}</text>`);
     }
     g.push('</g>');
     return g.join('');
   }
 
   const height = Math.ceil(rowTop + cellH + pad);
-  const bg = opts.background === null ? '' : `<rect width="100%" height="100%" fill="${opts.background ?? '#ffffff'}"/>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${height}" width="${W}" height="${height}" font-family="${escapeXml(font)}">${bg}${parts.join('')}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${height}" width="${W}" height="${height}" font-family="${escapeXml(font)}">${sheetChrome(opts)}${parts.join('')}</svg>`;
   return { svg, width: W, height };
 }
 
@@ -215,13 +238,14 @@ export function renderChartSvg(
     textColor?: string;
     mutedColor?: string;
     background?: string | null;
+    adaptive?: boolean;
     fingeringNames?: boolean;
     scale?: number;
   } = {},
 ): SheetResult {
   const W = opts.width ?? 860;
-  const text = opts.textColor ?? '#1f2a37';
-  const muted = opts.mutedColor ?? '#5b6b80';
+  const text = opts.textColor ?? LIGHT_TEXT.text;
+  const muted = opts.mutedColor ?? LIGHT_TEXT.muted;
   const { dw, dh, draw } = diagramDrawer(inst, 1.5, { scale: opts.scale, theme: opts.theme });
   const cellW = Math.max(dw + 18, 70);
   const cellH = dh + 40;
@@ -235,15 +259,14 @@ export function renderChartSvg(
     const y = 10 + row * cellH;
     const name = midiToName(tonic + fd.offset, flats);
     parts.push(draw(fd.holes, x + (cellW - dw) / 2, y));
-    parts.push(`<text x="${x + cellW / 2}" y="${y + dh + 16}" text-anchor="middle" font-size="13" font-weight="600" fill="${text}">${name}${fd.alt ? ' (alt)' : ''}</text>`);
-    if (opts.fingeringNames) parts.push(`<text x="${x + cellW / 2}" y="${y + dh + 30}" text-anchor="middle" font-size="10" fill="${muted}">reads ${midiToName(72 + fd.offset)}</text>`);
+    parts.push(`<text x="${x + cellW / 2}" y="${y + dh + 16}" text-anchor="middle" font-size="13" font-weight="600" class="oc-f-text" fill="${text}">${name}${fd.alt ? ' (alt)' : ''}</text>`);
+    if (opts.fingeringNames) parts.push(`<text x="${x + cellW / 2}" y="${y + dh + 30}" text-anchor="middle" font-size="10" class="oc-f-muted" fill="${muted}">reads ${midiToName(72 + fd.offset)}</text>`);
   });
   const rows = Math.ceil(inst.fingerings.length / cols);
   const height = 20 + rows * cellH;
   const width = Math.ceil(Math.max(Math.min(W, 20 + cols * cellW), 20 + cellW));
-  const bg = opts.background === null ? '' : `<rect width="100%" height="100%" fill="${opts.background ?? '#ffffff'}"/>`;
   return {
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" font-family="system-ui, sans-serif">${bg}${parts.join('')}</svg>`,
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" font-family="system-ui, sans-serif">${sheetChrome(opts)}${parts.join('')}</svg>`,
     width,
     height,
   };

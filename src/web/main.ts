@@ -3,6 +3,16 @@ import {
   arrange,
   Arrangement,
   COMMON_KEYS,
+  findDuplicate,
+  LibraryEntry,
+  LibrarySettings,
+  makeEntry,
+  mergeLibraries,
+  parseLibrary,
+  removeEntry,
+  searchLibrary,
+  serializeLibrary,
+  upsertEntry,
   CSS_THEME,
   describeOcarina,
   detectFormat,
@@ -16,6 +26,9 @@ import {
   parseSimple,
   renderChartSvg,
   renderHtml,
+  Notation,
+  renderNotation,
+  renderStaffSvg,
   renderTabSheet,
   renderText,
   resolveTonic,
@@ -46,11 +59,15 @@ interface Settings {
   durations: boolean;
   editorMode: 'text' | 'abc';
   text: string;
-  tab: 'sheet' | 'chart';
+  tab: 'sheet' | 'chart' | 'library';
   /** Diagram size in percent. */
   zoom: number;
   /** Keep the playing note in view. */
   autoscroll: boolean;
+  /** Library entry the editor holds, if any. */
+  libraryId: string | null;
+  /** What the Music tab shows: fingering tabs, staff notation, or both side by side. */
+  notation: Notation;
 }
 
 const DEFAULTS: Settings = {
@@ -67,6 +84,8 @@ const DEFAULTS: Settings = {
   tab: 'sheet',
   zoom: 100,
   autoscroll: true,
+  libraryId: null,
+  notation: 'tabs',
 };
 
 const STORE_KEY = 'ocarina-tabs:v1';
@@ -94,7 +113,35 @@ function saveSettings() {
 }
 
 const state: Settings = loadSettings();
-if (state.tab !== 'sheet' && state.tab !== 'chart') state.tab = 'sheet';
+if (state.tab !== 'sheet' && state.tab !== 'chart' && state.tab !== 'library') state.tab = 'sheet';
+if (state.notation !== 'tabs' && state.notation !== 'staff' && state.notation !== 'both') state.notation = 'tabs';
+
+// ---------------------------------------------------------------------------
+// Library (saved songs), kept in localStorage separately from the settings.
+
+const LIBRARY_KEY = 'ocarina-tabs:library:v1';
+
+function loadLibrary(): LibraryEntry[] {
+  try {
+    const raw = localStorage.getItem(LIBRARY_KEY);
+    return raw ? parseLibrary(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+let library: LibraryEntry[] = loadLibrary();
+if (state.libraryId && !library.some((e) => e.id === state.libraryId)) state.libraryId = null;
+
+function storeLibrary(): boolean {
+  try {
+    localStorage.setItem(LIBRARY_KEY, serializeLibrary(library));
+    return true;
+  } catch {
+    toast('Could not save the library in this browser (storage is full or blocked). Use Back up to keep a copy.');
+    return false;
+  }
+}
 
 /** Binary source (MIDI / MusicXML) kept so another track/part can be chosen. */
 let source: { name: string; data: Uint8Array | string; result: ImportResult; pick?: number } | null = null;
@@ -129,6 +176,17 @@ const els = {
   oor: $<HTMLSelectElement>('oor'),
   names: $<HTMLSelectElement>('names'),
   durations: $<HTMLInputElement>('durations'),
+  saveSong: $<HTMLButtonElement>('save-song'),
+  saveNew: $<HTMLButtonElement>('save-new'),
+  saveStatus: $<HTMLSpanElement>('save-status'),
+  library: $<HTMLDivElement>('library'),
+  libraryCount: $<HTMLSpanElement>('library-count'),
+  librarySearch: $<HTMLInputElement>('library-search'),
+  libraryBackup: $<HTMLButtonElement>('library-backup'),
+  libraryRestore: $<HTMLInputElement>('library-restore'),
+  libraryInfo: $<HTMLParagraphElement>('library-info'),
+  libraryList: $<HTMLUListElement>('library-list'),
+  legend: document.querySelector('.legend') as HTMLParagraphElement,
   zoom: $<HTMLInputElement>('zoom'),
   zoomIn: $<HTMLButtonElement>('zoom-in'),
   zoomOut: $<HTMLButtonElement>('zoom-out'),
@@ -137,6 +195,10 @@ const els = {
   status: $<HTMLDivElement>('status'),
   sheet: $<HTMLDivElement>('sheet'),
   chart: $<HTMLDivElement>('chart'),
+  staff: $<HTMLDivElement>('staff'),
+  music: $<HTMLDivElement>('music'),
+  viewbar: $<HTMLDivElement>('viewbar'),
+  notation: $<HTMLDivElement>('notation'),
 };
 
 for (const k of COMMON_KEYS) els.key.append(new Option(k, k));
@@ -156,8 +218,16 @@ function syncControls() {
   els.zoomValue.textContent = `${state.zoom}%`;
   els.editorMode.value = state.editorMode;
   for (const b of document.querySelectorAll<HTMLButtonElement>('.tabs button[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === state.tab));
-  els.sheet.hidden = state.tab !== 'sheet';
+  els.music.hidden = state.tab !== 'sheet';
+  els.viewbar.hidden = state.tab !== 'sheet';
+  els.staff.hidden = state.notation === 'tabs';
+  els.sheet.hidden = state.notation === 'staff';
+  els.music.classList.toggle('both', state.notation === 'both');
+  for (const b of els.notation.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.value === state.notation));
   els.chart.hidden = state.tab !== 'chart';
+  els.library.hidden = state.tab !== 'library';
+  els.status.hidden = state.tab === 'library';
+  els.legend.hidden = state.tab === 'library' || (state.tab === 'sheet' && state.notation === 'staff');
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +260,7 @@ function update() {
   renderSheet();
   renderChart();
   renderSuggestions(score);
+  renderSaveState();
   saveSettings();
 }
 
@@ -219,15 +290,33 @@ function sheetWidth(el: HTMLElement): number {
 
 const scale = () => state.zoom / 100;
 
+/** Render the Music tab: the staff and/or the fingering tabs, whichever are shown. */
 function renderSheet() {
   if (!current) return;
   const { arr, inst } = current;
   if (!arr.events.length) {
-    els.sheet.innerHTML = '<div class="empty">Open a file or type some notes to see fingerings.</div>';
+    const empty = '<div class="empty">Open a file or type some notes to see fingerings.</div>';
+    els.sheet.innerHTML = empty;
+    els.staff.innerHTML = empty;
     return;
   }
+  if (!els.staff.hidden) {
+    els.staff.innerHTML = renderStaffSvg(arr, {
+      width: sheetWidth(els.staff),
+      scale: scale(),
+      textColor: 'var(--text)',
+      mutedColor: 'var(--muted)',
+      warnColor: 'var(--warn)',
+      errorColor: 'var(--err)',
+      background: null,
+      adaptive: false,
+    }).svg;
+  }
+  if (els.sheet.hidden) return;
   const { svg } = renderTabSheet(arr, inst, {
     width: sheetWidth(els.sheet),
+    // Side by side: the title is already above the sheet music.
+    showHeader: state.notation !== 'both',
     names: state.names,
     showDurations: state.durations,
     scale: scale(),
@@ -237,6 +326,8 @@ function renderSheet() {
     warnColor: 'var(--warn)',
     errorColor: 'var(--err)',
     background: null,
+    // The page's own CSS variables already follow light/dark mode.
+    adaptive: false,
   });
   els.sheet.innerHTML = svg;
 }
@@ -251,6 +342,7 @@ function renderChart() {
     textColor: 'var(--text)',
     mutedColor: 'var(--muted)',
     background: null,
+    adaptive: false,
     fingeringNames: state.key !== 'C',
   });
   els.chart.innerHTML = svg;
@@ -297,7 +389,12 @@ function renderSuggestions(score: Score) {
 // ---------------------------------------------------------------------------
 // Loading files
 
-async function loadData(name: string, data: Uint8Array | string, pick?: number) {
+/**
+ * Load a song into the editor. `save`: 'new' adds an imported file to the library (or reuses an identical
+ * saved song), 'update' rewrites the open library entry (another track of the same file), false leaves the
+ * library alone (examples).
+ */
+async function loadData(name: string, data: Uint8Array | string, pick?: number, save: 'new' | 'update' | false = false) {
   stopPlayback();
   try {
     const sel: { track?: number; part?: number } = {};
@@ -321,9 +418,11 @@ async function loadData(name: string, data: Uint8Array | string, pick?: number) 
       els.editor.value = scoreToSimple(result.score);
     }
     state.text = els.editor.value;
+    if (save !== 'update') state.libraryId = null;
     renderSourceInfo(name);
     syncControls();
     update();
+    if (save) saveToLibrary({ source: name, quiet: save === 'update' });
   } catch (e) {
     toast(`Could not read ${name}: ${(e as Error).message}`);
   }
@@ -354,7 +453,140 @@ function renderSourceInfo(name: string) {
 
 async function loadFile(file: File) {
   const data = new Uint8Array(await file.arrayBuffer());
-  await loadData(file.name, data);
+  await loadData(file.name, data, undefined, 'new');
+}
+
+// ---------------------------------------------------------------------------
+// Library UI
+
+function currentSettings(): LibrarySettings {
+  return { instrument: state.instrument, key: state.key, voice: state.voice, transpose: state.transpose, manual: state.manual, oor: state.oor };
+}
+
+function openEntry(): LibraryEntry | undefined {
+  return state.libraryId ? library.find((e) => e.id === state.libraryId) : undefined;
+}
+
+/** Save the editor's song: update the open library entry, or add a new one (unless the same melody is already saved). */
+function saveToLibrary(opts: { source?: string; asNew?: boolean; quiet?: boolean } = {}) {
+  const text = els.editor.value;
+  if (!text.trim()) {
+    toast('Nothing to save yet: type or open a song first.');
+    return;
+  }
+  const mode = state.editorMode;
+  const open = opts.asNew ? undefined : openEntry();
+  const duplicate = open ? undefined : findDuplicate(library, text, mode);
+  const existing = open ?? duplicate;
+  const entry = makeEntry({
+    id: existing?.id,
+    text,
+    mode,
+    source: opts.source ?? existing?.source,
+    settings: currentSettings(),
+    fallbackTitle: existing?.title ?? current?.arr.title,
+  });
+  library = upsertEntry(library, entry);
+  state.libraryId = entry.id;
+  const stored = storeLibrary();
+  saveSettings();
+  renderSaveState();
+  renderLibrary();
+  if (stored && !opts.quiet) toast(duplicate ? `Already in your library: ${entry.title}` : `Saved to library: ${entry.title}`);
+}
+
+function renderSaveState() {
+  const open = openEntry();
+  const dirty = !!open && (open.text !== els.editor.value || open.mode !== state.editorMode);
+  els.saveSong.textContent = !open ? '☆ Save to library' : dirty ? '☆ Save changes' : '★ Saved';
+  els.saveSong.disabled = !!open && !dirty;
+  els.saveNew.hidden = !dirty;
+  els.saveStatus.textContent = open ? (dirty ? `Unsaved changes to "${open.title}"` : `In your library as "${open.title}"`) : '';
+}
+
+const KEYS = new Set<string>(COMMON_KEYS);
+
+/** Reopen a saved song with the ocarina settings it was saved with. */
+function openFromLibrary(id: string) {
+  const e = library.find((x) => x.id === id);
+  if (!e) return;
+  stopPlayback();
+  source = null;
+  const st = e.settings ?? {};
+  if (st.instrument && ['4', '6', '12'].includes(st.instrument)) state.instrument = st.instrument;
+  if (st.key && KEYS.has(st.key)) state.key = st.key;
+  if (st.voice === 'soprano' || st.voice === 'alto' || st.voice === 'bass') state.voice = st.voice;
+  if (st.transpose === 'auto' || st.transpose === 'octave' || st.transpose === 'none' || st.transpose === 'manual') state.transpose = st.transpose;
+  if (typeof st.manual === 'number') state.manual = st.manual;
+  if (st.oor === 'fold' || st.oor === 'mark') state.oor = st.oor;
+  state.editorMode = e.mode;
+  els.editor.value = e.text;
+  state.text = e.text;
+  state.libraryId = e.id;
+  state.tab = 'sheet';
+  renderSourceInfo(`"${e.title}" from your library`);
+  syncControls();
+  update();
+  renderLibrary();
+  window.scrollTo({ top: 0 });
+}
+
+function deleteFromLibrary(id: string) {
+  const e = library.find((x) => x.id === id);
+  if (!e) return;
+  if (!window.confirm(`Delete "${e.title}" from the library? This cannot be undone unless you have a backup.`)) return;
+  library = removeEntry(library, id);
+  if (state.libraryId === id) state.libraryId = null;
+  storeLibrary();
+  saveSettings();
+  renderSaveState();
+  renderLibrary();
+}
+
+function timeAgo(t: number): string {
+  const s = (Date.now() - t) / 1000;
+  if (s < 60) return 'just now';
+  if (s >= 2592000) return new Date(t).toLocaleDateString();
+  const units: [number, string][] = [
+    [60, 'minute'],
+    [3600, 'hour'],
+    [86400, 'day'],
+    [604800, 'week'],
+  ];
+  let [div, name] = units[0];
+  for (const u of units) if (s >= u[0]) [div, name] = u;
+  const n = Math.floor(s / div);
+  return `${n} ${name}${n === 1 ? '' : 's'} ago`;
+}
+
+function describeSettings(st?: LibrarySettings): string {
+  if (!st?.instrument) return '';
+  const voice = st.voice ? cap(st.voice) + ' ' : '';
+  return `${st.instrument}-hole ${voice}${st.key ?? ''}`.trim();
+}
+
+function renderLibrary() {
+  els.libraryCount.textContent = library.length ? String(library.length) : '';
+  if (state.tab !== 'library') return;
+  const q = els.librarySearch.value;
+  const list = searchLibrary(library, q);
+  if (!library.length) {
+    els.libraryInfo.textContent = 'No saved songs yet. Files you open are saved here automatically; for a typed song press "Save to library".';
+  } else if (!list.length) {
+    els.libraryInfo.textContent = `No saved song matches "${q}".`;
+  } else {
+    const n = list.length === library.length ? `${library.length}` : `${list.length} of ${library.length}`;
+    els.libraryInfo.textContent = `${n} saved song${library.length === 1 ? '' : 's'} · stored in this browser, use Back up to keep a copy.`;
+  }
+  els.libraryList.innerHTML = list
+    .map((e) => {
+      const meta = [e.composer, `${e.notes} notes`, e.range, describeSettings(e.settings), e.source, `saved ${timeAgo(e.updated)}`].filter(Boolean).join(' · ');
+      return `<li class="song${e.id === state.libraryId ? ' current' : ''}" data-id="${escapeHtml(e.id)}">
+  <button type="button" class="song-open" data-action="open"><span class="song-title">${escapeHtml(e.title)}</span><span class="song-meta">${escapeHtml(meta)}</span></button>
+  <button type="button" class="song-del" data-action="delete" aria-label="Delete ${escapeHtml(e.title)}" title="Delete">✕</button>
+</li>`;
+    })
+    .join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -368,17 +600,35 @@ function stopPlayback() {
 
 // Auto-scroll: while playing, each new row of the sheet is scrolled to about a third of the way down
 // the screen. Scrolling by hand pauses it for a few seconds so the reader can look around.
-let lastRowTop: number | null = null;
+// In side-by-side view each pane scrolls on its own; otherwise the page scrolls.
+const lastRowTop = new Map<Element, number>();
 let userScrolledAt = 0;
 let programmaticScrollUntil = 0;
 
-function followCell(cell: Element) {
+function scrollsItself(el: HTMLElement): boolean {
+  const o = getComputedStyle(el).overflowY;
+  return (o === 'auto' || o === 'scroll') && el.scrollHeight > el.clientHeight + 2;
+}
+
+function followCell(pane: HTMLElement, cell: Element) {
   if (!state.autoscroll || Date.now() - userScrolledAt < 4000) return;
   const rect = cell.getBoundingClientRect();
+  if (scrollsItself(pane)) {
+    const pr = pane.getBoundingClientRect();
+    const rowTop = Math.round(rect.top - pr.top + pane.scrollTop);
+    const offScreen = rect.top < pr.top || rect.bottom > pr.bottom;
+    if (rowTop === lastRowTop.get(pane) && !offScreen) return;
+    lastRowTop.set(pane, rowTop);
+    const target = Math.max(0, rowTop - pane.clientHeight * 0.3);
+    if (Math.abs(target - pane.scrollTop) < 4) return;
+    programmaticScrollUntil = Date.now() + 900;
+    pane.scrollTo({ top: target, behavior: 'smooth' });
+    return;
+  }
   const rowTop = Math.round(rect.top + window.scrollY);
   const offScreen = rect.top < 60 || rect.bottom > window.innerHeight - 20;
-  if (rowTop === lastRowTop && !offScreen) return;
-  lastRowTop = rowTop;
+  if (rowTop === lastRowTop.get(document.documentElement) && !offScreen) return;
+  lastRowTop.set(document.documentElement, rowTop);
   const target = Math.max(0, rowTop - window.innerHeight * 0.3);
   if (Math.abs(target - window.scrollY) < 4) return;
   programmaticScrollUntil = Date.now() + 900;
@@ -394,21 +644,25 @@ window.addEventListener('keydown', (e) => {
   if (['PageDown', 'PageUp', 'ArrowDown', 'ArrowUp', 'Home', 'End', ' '].includes(e.key) && e.target === document.body) onUserScroll();
 });
 
+const visiblePanes = () => [els.staff, els.sheet].filter((p) => !p.hidden);
+
+/** Mark the note in every visible pane (a tied note can have several cells) and keep it in view. */
 function highlight(index: number | null) {
-  els.sheet.querySelector('.cell.playing')?.classList.remove('playing');
+  for (const p of [els.staff, els.sheet]) for (const c of p.querySelectorAll('.cell.playing')) c.classList.remove('playing');
   if (index === null) {
-    lastRowTop = null;
+    lastRowTop.clear();
     return;
   }
-  const cell = els.sheet.querySelector(`.cell[data-index="${index}"]`);
-  if (!cell) return;
-  cell.classList.add('playing');
-  if (player.playing) followCell(cell);
+  for (const p of visiblePanes()) {
+    const cells = p.querySelectorAll(`.cell[data-index="${index}"]`);
+    cells.forEach((c) => c.classList.add('playing'));
+    if (cells[0] && player.playing) followCell(p, cells[0]);
+  }
 }
 
 function startPlayback(fromBeat = 0) {
   if (!current) return;
-  lastRowTop = null;
+  lastRowTop.clear();
   userScrolledAt = 0;
   if (state.tab !== 'sheet') {
     state.tab = 'sheet';
@@ -445,10 +699,11 @@ async function doExport(kind: string) {
   const name = `${baseName()}-${inst.id}h-${state.key}`;
   switch (kind) {
     case 'svg':
-      download(`${name}.svg`, renderTabSheet(arr, inst, fixed).svg, 'image/svg+xml');
+      download(`${name}.svg`, renderNotation(arr, inst, state.notation, fixed).svg, 'image/svg+xml');
       break;
     case 'png': {
-      const { svg, width, height } = renderTabSheet(arr, inst, fixed);
+      // A PNG can't follow dark mode, so it gets a white page.
+      const { svg, width, height } = renderNotation(arr, inst, state.notation, { ...fixed, background: '#ffffff' });
       const img = new Image();
       img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
       await img.decode();
@@ -463,7 +718,7 @@ async function doExport(kind: string) {
       break;
     }
     case 'html':
-      download(`${name}.html`, renderHtml(arr, inst, fixed), 'text/html');
+      download(`${name}.html`, renderHtml(arr, inst, { ...fixed, notation: state.notation }), 'text/html');
       break;
     case 'print':
       state.tab = 'sheet';
@@ -568,7 +823,7 @@ els.zoom.addEventListener('input', () => setZoom(parseInt(els.zoom.value, 10) ||
 els.zoomIn.addEventListener('click', () => setZoom(state.zoom + 10));
 els.zoomOut.addEventListener('click', () => setZoom(state.zoom - 10));
 // Ctrl/⌘ + wheel over the sheet resizes the diagrams instead of the page.
-for (const el of [els.sheet, els.chart]) {
+for (const el of [els.sheet, els.staff, els.chart]) {
   el.addEventListener(
     'wheel',
     (e) => {
@@ -590,7 +845,7 @@ const onEdit = debounce(() => {
 els.editor.addEventListener('input', onEdit);
 
 els.sourcePick.addEventListener('change', () => {
-  if (source) void loadData(source.name, source.data, parseInt(els.sourcePick.value, 10));
+  if (source) void loadData(source.name, source.data, parseInt(els.sourcePick.value, 10), state.libraryId ? 'update' : false);
 });
 
 els.file.addEventListener('change', () => {
@@ -624,18 +879,58 @@ for (const target of [els.drop, document.body]) {
 els.autoscroll.addEventListener('click', () => {
   state.autoscroll = !state.autoscroll;
   userScrolledAt = 0;
-  lastRowTop = null;
+  lastRowTop.clear();
   syncControls();
   saveSettings();
-  const cell = els.sheet.querySelector('.cell.playing');
-  if (cell && player.playing) followCell(cell);
+  if (player.playing) {
+    for (const p of visiblePanes()) {
+      const cell = p.querySelector('.cell.playing');
+      if (cell) followCell(p, cell);
+    }
+  }
 });
+els.saveSong.addEventListener('click', () => saveToLibrary());
+els.saveNew.addEventListener('click', () => saveToLibrary({ asNew: true }));
+els.librarySearch.addEventListener('input', renderLibrary);
+els.libraryList.addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-action]');
+  const id = b?.closest<HTMLLIElement>('li[data-id]')?.dataset.id;
+  if (!b || !id) return;
+  if (b.dataset.action === 'open') openFromLibrary(id);
+  else deleteFromLibrary(id);
+});
+els.libraryBackup.addEventListener('click', () => {
+  if (!library.length) {
+    toast('The library is empty.');
+    return;
+  }
+  const date = new Date().toISOString().slice(0, 10);
+  download(`ocarina-tabs-library-${date}.json`, serializeLibrary(library), 'application/json');
+});
+els.libraryRestore.addEventListener('change', async () => {
+  const f = els.libraryRestore.files?.[0];
+  els.libraryRestore.value = '';
+  if (!f) return;
+  try {
+    const incoming = parseLibrary(await f.text());
+    const r = mergeLibraries(library, incoming);
+    library = r.list;
+    storeLibrary();
+    renderLibrary();
+    renderSaveState();
+    const same = incoming.length - r.added - r.updated;
+    toast(`Restored ${f.name}: ${r.added} added, ${r.updated} updated${same ? `, ${same} already here` : ''}.`);
+  } catch (e) {
+    toast(`Could not restore ${f.name}: ${(e as Error).message}`);
+  }
+});
+
 els.play.addEventListener('click', () => {
   if (player.playing) stopPlayback();
   else startPlayback();
 });
 
-els.sheet.addEventListener('click', (e) => {
+const onNoteClick = (e: Event) => {
   const cell = (e.target as Element).closest<SVGGElement>('.cell');
   if (!cell || !current) return;
   const ev = current.arr.events[Number(cell.dataset.index)];
@@ -646,6 +941,21 @@ els.sheet.addEventListener('click', (e) => {
   }
   highlight(ev.index);
   if (ev.pitch !== null && ev.status !== 'out-of-range') void player.preview(ev.pitch);
+};
+els.sheet.addEventListener('click', onNoteClick);
+els.staff.addEventListener('click', onNoteClick);
+
+els.notation.addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-value]');
+  if (!b) return;
+  state.notation = b.dataset.value as Notation;
+  lastRowTop.clear();
+  syncControls();
+  renderSheet();
+  saveSettings();
+  // Keep the playing note marked in the newly shown pane.
+  const playing = document.querySelector<SVGGElement>('.cell.playing');
+  if (playing) highlight(Number(playing.dataset.index));
 });
 
 els.exportBtn.addEventListener('click', (e) => {
@@ -669,6 +979,7 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('.tabs button[data-
     state.tab = b.dataset.tab as Settings['tab'];
     syncControls();
     renderChart();
+    renderLibrary();
     saveSettings();
   });
 }
@@ -676,7 +987,7 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('.tabs button[data-
 let lastWidth = 0;
 new ResizeObserver(
   debounce(() => {
-    const w = els.sheet.clientWidth || els.chart.clientWidth;
+    const w = els.music.clientWidth || els.chart.clientWidth;
     if (Math.abs(w - lastWidth) < 4) return;
     lastWidth = w;
     renderSheet();
@@ -688,6 +999,7 @@ new ResizeObserver(
 els.editor.value = state.text;
 syncControls();
 update();
+renderLibrary();
 
 // Expose a small API for automation (e.g. an agent driving the page, or a native Android shell).
 Object.assign(window, {
@@ -708,5 +1020,10 @@ Object.assign(window, {
     get arrangement() {
       return current?.arr;
     },
+    get library() {
+      return library;
+    },
+    saveToLibrary: () => saveToLibrary(),
+    openFromLibrary,
   },
 });

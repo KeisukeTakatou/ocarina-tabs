@@ -63,6 +63,8 @@ export interface Arrangement {
   tonic: number;
   tonicName: string;
   transpose: number;
+  /** Key signature after transposition (major-key fifths), when the source had one. */
+  keyFifths?: number;
   bars: number[];
   events: TabEvent[];
   stats: {
@@ -215,6 +217,7 @@ export function arrange(score: Score, spec: OcarinaSpec, options: ArrangeOptions
     tonic: spec.tonic,
     tonicName: midiToName(spec.tonic, tonicFlats),
     transpose: t,
+    keyFifths: score.keyFifths !== undefined ? majorKeyFifths(pitchClass(songTonicPc + t)) : undefined,
     bars,
     events,
     stats: {

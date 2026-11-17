@@ -14,7 +14,10 @@ export { parseSimple, scoreToSimple, formatDuration } from './parsers/simple.ts'
 export { extractMxl } from './parsers/zip.ts';
 export * from './render/diagram.ts';
 export * from './render/sheet.ts';
+export * from './render/staff.ts';
+export * from './render/notation.ts';
 export * from './render/text.ts';
+export * from './library.ts';
 export * from './render/html.ts';
 
 import { arrange, Arrangement, ArrangeOptions } from './arrange.ts';
